@@ -25,6 +25,14 @@ class Document(models.Model):
         related_name="documents",
     )
 
+    # >>> NEW: ties every document to the exact chat it was uploaded in.
+    # This is the core fix for cross-chat document leakage.
+    conversation = models.ForeignKey(
+        "conversations.Conversation",
+        on_delete=models.CASCADE,
+        related_name="documents",
+    )
+
     name = models.CharField(
         max_length=255,
     )
@@ -51,6 +59,13 @@ class Document(models.Model):
     updated_at = models.DateTimeField(
         auto_now=True,
     )
+
+    class Meta:
+        # >>> NEW: every document listing/lookup in the new flow is
+        # scoped by conversation, so index it.
+        indexes = [
+            models.Index(fields=["conversation", "status"]),
+        ]
 
     def __str__(self):
         return self.name

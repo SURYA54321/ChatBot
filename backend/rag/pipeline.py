@@ -1,7 +1,16 @@
 from rag.llm import get_llm
 from rag.prompts.rag_prompt import RAG_PROMPT
+from rag.prompts.normal_prompt import NORMAL_PROMPT
 from rag.retrievers.rag_retriever import retrieve_documents
-import time 
+
+# >>> NEW: cross-encoder relevance score cutoff. CrossEncoderReranker
+# attaches a "relevance_score" to each document's metadata after
+# reranking. ms-marco style cross-encoders produce roughly
+# positive-for-relevant / negative-for-irrelevant scores, so 0.0 is a
+# reasonable default cutoff. Raise it if you see irrelevant context
+# still leaking through; lower it if relevant answers get skipped.
+RELEVANCE_THRESHOLD = 0.0
+
 
 def format_documents(documents):
     """
@@ -13,17 +22,10 @@ def format_documents(documents):
 
     formatted_documents = []
 
-    for index, document in enumerate(
-        documents,
-        start=1,
-    ):
+    for index, document in enumerate(documents, start=1):
         metadata = document.metadata
 
-        filename = metadata.get(
-            "filename",
-            "Unknown",
-        )
-
+        filename = metadata.get("filename", "Unknown")
         page = metadata.get("page")
 
         source = filename
@@ -42,11 +44,7 @@ Source: {source}
     return "\n\n".join(formatted_documents)
 
 
-def build_rag_prompt(
-    question: str,
-    chat_history: str,
-    documents,
-):
+def build_rag_prompt(question: str, chat_history: str, documents):
     context = format_documents(documents)
 
     return RAG_PROMPT.invoke(
@@ -58,52 +56,94 @@ def build_rag_prompt(
     )
 
 
-# Duplicate 
+def build_normal_prompt(question: str, chat_history: str):
+    return NORMAL_PROMPT.invoke(
+        {
+            "question": question,
+            "chat_history": chat_history,
+        }
+    )
+
+
+def _is_relevant(documents) -> bool:
+    """
+    >>> NEW: decides RAG vs normal chat using the reranker's own
+    score — no extra LLM call needed, so this adds ~0ms to latency.
+    """
+    if not documents:
+        return False
+
+    top_score = documents[0].metadata.get("relevance_score")
+
+    if top_score is None:
+        # Reranker didn't attach a score for some reason — fail safe
+        # by treating retrieval as relevant rather than silently
+        # dropping context.
+        return True
+
+    return top_score >= RELEVANCE_THRESHOLD
+
 
 def run_rag(
     question: str,
     user_id: str,
+    conversation_id: str,
+    has_documents: bool,
     chat_history: str = "",
-    initial_k: int = 10,
+    initial_k: int = 7,
     final_k: int = 5,
 ):
     """
-    Complete RAG pipeline.
+    Complete pipeline. Routes between normal chat and RAG depending
+    on whether the current conversation has documents AND whether
+    retrieval actually found something relevant.
     """
-    
-    start_time = time.time()
-    
-    # Retrieval
-    t1 = time.time()
+
+    llm = get_llm()
+
+    # --------------------------------------------------
+    # No documents in this chat at all -> skip retrieval entirely.
+    # --------------------------------------------------
+    if not has_documents:
+        prompt = build_normal_prompt(question, chat_history)
+        response = llm.invoke(prompt)
+
+        return {
+            "answer": response.content,
+            "original_query": question,
+            "rewritten_query": question,
+            "documents": [],
+        }
+
+    # --------------------------------------------------
+    # Documents exist -> retrieve + rerank, then decide relevance.
+    # --------------------------------------------------
     retrieval_result = retrieve_documents(
         question=question,
         user_id=user_id,
+        conversation_id=conversation_id,
         chat_history=chat_history,
         initial_k=initial_k,
         final_k=final_k,
     )
-    print(f"⏱️ Retrieval: {time.time() - t1:.2f}s")
-    
+
     documents = retrieval_result["documents"]
     rewritten_query = retrieval_result["rewritten_query"]
-    
-    # Build prompt
-    t2 = time.time()
-    prompt = build_rag_prompt(
-        question=question,
-        chat_history=chat_history,
-        documents=documents,
-    )
-    print(f"⏱️ Prompt building: {time.time() - t2:.2f}s")
-    
-    # LLM generation
-    t3 = time.time()
-    llm = get_llm()
+
+    if not _is_relevant(documents):
+        prompt = build_normal_prompt(question, chat_history)
+        response = llm.invoke(prompt)
+
+        return {
+            "answer": response.content,
+            "original_query": question,
+            "rewritten_query": rewritten_query,
+            "documents": [],
+        }
+
+    prompt = build_rag_prompt(question, chat_history, documents)
     response = llm.invoke(prompt)
-    print(f"⏱️ LLM generation: {time.time() - t3:.2f}s")
-    
-    print(f"⏱️ TOTAL: {time.time() - start_time:.2f}s")
-    
+
     return {
         "answer": response.content,
         "original_query": question,
@@ -111,167 +151,71 @@ def run_rag(
         "documents": documents,
     }
 
-#  Original
-# def run_rag(
-#     question: str,
-#     user_id: str,
-#     chat_history: str = "",
-#     initial_k: int = 20,
-#     final_k: int = 5,
-# ):
-#     """
-#     Complete RAG pipeline.
 
-#     Returns:
-#         answer
-#         retrieved documents
-#         rewritten query
-#     """
-
-#     retrieval_result = retrieve_documents(
-#         question=question,
-#         user_id=user_id,
-#         chat_history=chat_history,
-#         initial_k=initial_k,
-#         final_k=final_k,
-#     )
-
-#     documents = retrieval_result["documents"]
-
-#     rewritten_query = retrieval_result[
-#         "rewritten_query"
-#     ]
-
-#     prompt = build_rag_prompt(
-#         question=question,
-#         chat_history=chat_history,
-#         documents=documents,
-#     )
-
-#     llm = get_llm()
-
-#     response = llm.invoke(prompt)
-
-#     return {
-#         "answer": response.content,
-#         "original_query": question,
-#         "rewritten_query": rewritten_query,
-#         "documents": documents,
-#     }
-
-
-
-
-# Duplicate
 def stream_rag(
     question: str,
     user_id: str,
+    conversation_id: str,
+    has_documents: bool,
     chat_history: str = "",
-    initial_k: int = 20,
+    initial_k: int = 7,
     final_k: int = 5,
 ):
     """
-    Stream the final LLM response while keeping
-    retrieval and reranking non-streaming.
+    Stream the final LLM response while keeping retrieval and
+    reranking non-streaming. Same routing logic as run_rag.
     """
-    
-    start_time = time.time()
-    print(f"\n{'='*60}")
-    print(f"🚀 RAG STREAMING PIPELINE STARTED")
-    print(f"{'='*60}")
-    
-    # Retrieval (non-streaming)
-    t1 = time.time()
+
+    llm = get_llm()
+
+    if not has_documents:
+        prompt = build_normal_prompt(question, chat_history)
+
+        for chunk in llm.stream(prompt):
+            if chunk.content:
+                yield {"type": "token", "content": chunk.content}
+
+        yield {
+            "type": "done",
+            "rewritten_query": question,
+            "documents": [],
+        }
+        return
+
     retrieval_result = retrieve_documents(
         question=question,
         user_id=user_id,
+        conversation_id=conversation_id,
         chat_history=chat_history,
         initial_k=initial_k,
         final_k=final_k,
     )
-    retrieval_time = time.time() - t1
-    print(f"⏱️  Retrieval: {retrieval_time:.2f}s")
-    
+
     documents = retrieval_result["documents"]
-    
-    # Build prompt
-    t2 = time.time()
-    prompt = build_rag_prompt(
-        question=question,
-        chat_history=chat_history,
-        documents=documents,
-    )
-    prompt_time = time.time() - t2
-    print(f"⏱️  Prompt building: {prompt_time:.2f}s")
-    
-    # LLM streaming
-    print(f"⏱️  LLM streaming started...")
-    llm = get_llm()
-    
-    llm_start = time.time()
+    rewritten_query = retrieval_result["rewritten_query"]
+
+    if not _is_relevant(documents):
+        prompt = build_normal_prompt(question, chat_history)
+
+        for chunk in llm.stream(prompt):
+            if chunk.content:
+                yield {"type": "token", "content": chunk.content}
+
+        yield {
+            "type": "done",
+            "rewritten_query": rewritten_query,
+            "documents": [],
+        }
+        return
+
+    prompt = build_rag_prompt(question, chat_history, documents)
+
     for chunk in llm.stream(prompt):
         if chunk.content:
-            yield {
-                "type": "token",
-                "content": chunk.content,
-            }
-    llm_time = time.time() - llm_start
-    print(f"⏱️  LLM streaming: {llm_time:.2f}s")
-    
-    total_time = time.time() - start_time
-    print(f"{'='*60}")
-    print(f"⏱️  TOTAL: {total_time:.2f}s")
-    print(f"{'='*60}\n")
-    
+            yield {"type": "token", "content": chunk.content}
+
     yield {
         "type": "done",
-        "rewritten_query": retrieval_result["rewritten_query"],
+        "rewritten_query": rewritten_query,
         "documents": documents,
     }
-
-
-# Original
-# def stream_rag(
-#     question: str,
-#     user_id: str,
-#     chat_history: str = "",
-#     initial_k: int = 20,
-#     final_k: int = 5,
-# ):
-#     """
-#     Stream the final LLM response while keeping
-#     retrieval and reranking non-streaming.
-#     """
-
-#     retrieval_result = retrieve_documents(
-#         question=question,
-#         user_id=user_id,
-#         chat_history=chat_history,
-#         initial_k=initial_k,
-#         final_k=final_k,
-#     )
-
-#     documents = retrieval_result["documents"]
-
-#     prompt = build_rag_prompt(
-#         question=question,
-#         chat_history=chat_history,
-#         documents=documents,
-#     )
-
-#     llm = get_llm()
-
-#     for chunk in llm.stream(prompt):
-#         if chunk.content:
-#             yield {
-#                 "type": "token",
-#                 "content": chunk.content,
-#             }
-
-#     yield {
-#         "type": "done",
-#         "rewritten_query": retrieval_result[
-#             "rewritten_query"
-#         ],
-#         "documents": documents,
-#     }

@@ -16,27 +16,16 @@ CHROMA_DIR = BASE_DIR / "chroma_db"
 
 COLLECTION_NAME = "rag_documents"
 
-@lru_cache(maxsize=1)  # ✅ ADD THIS
+
+@lru_cache(maxsize=1)
 def get_vector_store():
     embedding_model = get_embedding_model()
-    
+
     return Chroma(
         collection_name=COLLECTION_NAME,
         embedding_function=embedding_model,
         persist_directory=str(CHROMA_DIR),
     )
-
-
-# Original
-
-# def get_vector_store():
-#     embedding_model = get_embedding_model()
-
-#     return Chroma(
-#         collection_name=COLLECTION_NAME,
-#         embedding_function=embedding_model,
-#         persist_directory=str(CHROMA_DIR),
-#     )
 
 
 def add_documents(chunks):
@@ -58,15 +47,22 @@ def add_documents(chunks):
 def similarity_search(
     query: str,
     user_id: str,
+    conversation_id: str,
     k: int = 20,
 ):
     vector_store = get_vector_store()
 
+    # >>> CHANGED: filter by BOTH user_id and conversation_id, not
+    # just user_id. This is the core fix for cross-chat document
+    # leakage (requirement #2 and #5).
     return vector_store.similarity_search(
         query,
         k=k,
         filter={
-            "user_id": str(user_id)
+            "$and": [
+                {"user_id": str(user_id)},
+                {"conversation_id": str(conversation_id)},
+            ]
         },
     )
 

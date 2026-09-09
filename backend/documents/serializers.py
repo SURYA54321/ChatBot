@@ -8,6 +8,7 @@ class DocumentSerializer(serializers.ModelSerializer):
         model = Document
         fields = [
             "id",
+            "conversation",
             "name",
             "file",
             "file_type",
@@ -51,3 +52,16 @@ class DocumentSerializer(serializers.ModelSerializer):
             )
 
         return file
+
+    def validate_conversation(self, conversation):
+        # >>> NEW: make sure a user can't upload a document into
+        # someone else's conversation just by guessing/passing a
+        # different conversation_id.
+        request = self.context.get("request")
+
+        if request and conversation.user_id != request.user.id:
+            raise serializers.ValidationError(
+                "Conversation not found."
+            )
+
+        return conversation

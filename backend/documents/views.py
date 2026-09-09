@@ -1,49 +1,67 @@
+import logging
+
 from rest_framework import status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from conversations.models import Conversation
 from rag.ingestion import process_document
-from rag.vectorstore.chroma_store import add_documents
+from rag.vectorstore.chroma_store import (
+    add_documents,
+    delete_document_vectors,
+)
 
 from .models import Document
 from .serializers import DocumentSerializer
 
-from rag.vectorstore.chroma_store import (
-    delete_document_vectors,
-)
+logger = logging.getLogger(__name__)
+
 
 class DocumentListUploadView(APIView):
     parser_classes = [MultiPartParser, FormParser]
 
     def get(self, request):
+        # >>> CHANGED: documents are now listed per-conversation, not
+        # globally per-user. The frontend must pass ?conversation_id=...
+        conversation_id = request.query_params.get(
+            "conversation_id"
+        )
+
+        if not conversation_id:
+            return Response(
+                {"detail": "conversation_id query parameter is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         documents = Document.objects.filter(
-            user=request.user
+            user=request.user,
+            conversation_id=conversation_id,
         )
 
         serializer = DocumentSerializer(
             documents,
-            many=True
+            many=True,
         )
 
         return Response(serializer.data)
 
     def post(self, request):
-        print("CONTENT TYPE:", request.content_type)
-        print("DATA:", request.data)
-        print("FILES:", request.FILES)
+        # >>> CHANGED: pass request in context so
+        # validate_conversation() can check ownership.
         serializer = DocumentSerializer(
-            data=request.data
+            data=request.data,
+            context={"request": request},
         )
 
         serializer.is_valid(raise_exception=True)
 
+        uploaded_file = serializer.validated_data["file"]
+
         document = serializer.save(
             user=request.user,
-            name=serializer.validated_data["file"].name,
-            file_type=serializer.validated_data[
-                "file"
-            ].name.split(".")[-1].lower(),
+            name=uploaded_file.name,
+            file_type=uploaded_file.name.split(".")[-1].lower(),
         )
 
         # --------------------------------------------
@@ -51,14 +69,15 @@ class DocumentListUploadView(APIView):
         # --------------------------------------------
 
         document.status = "processing"
-        document.save(
-            update_fields=["status"]
-        )
+        document.save(update_fields=["status"])
 
         try:
             chunks = process_document(
                 file_path=document.file.path,
                 user_id=str(request.user.id),
+                # >>> NEW: conversation_id flows into chunk metadata,
+                # so retrieval can filter by it later.
+                conversation_id=str(document.conversation_id),
                 document_id=str(document.id),
                 filename=document.name,
                 file_type=document.file_type,
@@ -72,22 +91,21 @@ class DocumentListUploadView(APIView):
             add_documents(chunks)
 
             document.status = "completed"
-            document.save(
-                update_fields=["status"]
-            )
+            document.save(update_fields=["status"])
 
         except Exception:
-            document.status = "failed"
-            document.save(
-                update_fields=["status"]
+            logger.exception(
+                "Document processing failed for document_id=%s",
+                document.id,
             )
+
+            document.status = "failed"
+            document.save(update_fields=["status"])
 
             return Response(
                 {
                     "detail": "Document processing failed.",
-                    "document": DocumentSerializer(
-                        document
-                    ).data,
+                    "document": DocumentSerializer(document).data,
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
@@ -110,10 +128,7 @@ class DocumentDetailView(APIView):
             return None
 
     def get(self, request, document_id):
-        document = self.get_object(
-            request,
-            document_id,
-        )
+        document = self.get_object(request, document_id)
 
         if not document:
             return Response(
@@ -126,25 +141,28 @@ class DocumentDetailView(APIView):
         return Response(serializer.data)
 
     def delete(self, request, document_id):
-     document = self.get_object(
-        request,
-        document_id,
-     )
+        document = self.get_object(request, document_id)
 
-     if not document:
-        return Response(
-            {"detail": "Document not found."},
-            status=status.HTTP_404_NOT_FOUND,
-        )
+        if not document:
+            return Response(
+                {"detail": "Document not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
-     delete_document_vectors(
-        document_id=str(document.id),
-        user_id=str(request.user.id),
-     )
+        try:
+            delete_document_vectors(
+                document_id=str(document.id),
+                user_id=str(request.user.id),
+            )
+        except Exception:
+            # >>> NEW: don't let a vector-store hiccup block the user
+            # from deleting the document record/file itself.
+            logger.exception(
+                "Failed to delete vectors for document_id=%s",
+                document.id,
+            )
 
-     document.file.delete(save=False)
-     document.delete()
+        document.file.delete(save=False)
+        document.delete()
 
-     return Response(
-        status=status.HTTP_204_NO_CONTENT
-     )
+        return Response(status=status.HTTP_204_NO_CONTENT)

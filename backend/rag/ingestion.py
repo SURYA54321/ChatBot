@@ -5,6 +5,7 @@ from rag.splitters.text_splitter import split_documents
 def process_document(
     file_path: str,
     user_id: str,
+    conversation_id: str,
     document_id: str,
     filename: str,
     file_type: str,
@@ -21,6 +22,10 @@ def process_document(
         chunk.metadata.update(
             {
                 "user_id": str(user_id),
+                # >>> NEW: this is the key that makes chat-level
+                # isolation possible in the vector store. Without it,
+                # retrieval can only filter by user, not by chat.
+                "conversation_id": str(conversation_id),
                 "document_id": str(document_id),
                 "filename": filename,
                 "file_type": file_type,

@@ -7,7 +7,7 @@ import time
 
 
 # Further Duplicate
-
+# Version 2
 
 def retrieve_documents(
     question: str,

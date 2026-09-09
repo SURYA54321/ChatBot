@@ -1,0 +1,11 @@
+Django is a Python web framework designed for rapid development.
+
+Django follows the Model Template View architecture.
+
+Models are responsible for defining the structure of application data.
+
+Views contain the logic that processes requests and returns responses.
+
+Templates are used to present data to users.
+
+Django also provides an authentication system, an admin interface, URL routing, middleware, and many other features.

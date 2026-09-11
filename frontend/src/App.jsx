@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Login from "./pages/Login";
 import Chat from "./pages/Chat";
 import ProtectedRoute from "./components/ProtectedRoute";
-import Documents from "./pages/Documents";
 
 function App() {
   return (
@@ -20,15 +19,6 @@ function App() {
           }
         />
 
-        <Route
-          path="/documents"
-          element={
-            <ProtectedRoute>
-              <Documents />
-            </ProtectedRoute>
-          }
-        />
-
         <Route path="*" element={<Navigate to="/chat" />} />
       </Routes>
     </BrowserRouter>
@@ -36,6 +26,3 @@ function App() {
 }
 
 export default App;
-
-// Remember we completed till frontend chat api
-// Need to start at streaming ui

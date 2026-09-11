@@ -14,9 +14,7 @@ import ChatInput from "./ChatInput";
 
 function ChatWindow() {
     const conversationId = useSelector(
-        (state) =>
-            state.conversations
-                .selectedConversationId
+        (state) => state.conversations.selectedConversationId
     );
 
     const [messages, setMessages] = useState([]);
@@ -32,18 +30,14 @@ function ChatWindow() {
             try {
                 setLoading(true);
 
-                const data =
-                    await getConversationMessages(
-                        conversationId
-                    );
+                const data = await getConversationMessages(
+                    conversationId
+                );
 
                 setMessages(data);
             } catch (error) {
                 console.error(error);
-
-                toast.error(
-                    "Failed to load messages"
-                );
+                toast.error("Failed to load messages");
             } finally {
                 setLoading(false);
             }
@@ -52,15 +46,8 @@ function ChatWindow() {
         loadMessages();
     }, [conversationId]);
 
-    const handleSend = async (
-        message,
-        isRetry = false
-    ) => {
-        if (
-            !conversationId ||
-            !message.trim() ||
-            loading
-        ) {
+    const handleSend = async (message, isRetry = false) => {
+        if (!conversationId || !message.trim() || loading) {
             return;
         }
 
@@ -73,13 +60,9 @@ function ChatWindow() {
                 content: message,
             };
 
-            setMessages((prev) => [
-                ...prev,
-                userMessage,
-            ]);
+            setMessages((prev) => [...prev, userMessage]);
 
-            assistantMessageId =
-                `assistant-${Date.now()}`;
+            assistantMessageId = `assistant-${Date.now()}`;
 
             const assistantMessage = {
                 id: assistantMessageId,
@@ -87,13 +70,9 @@ function ChatWindow() {
                 content: "",
             };
 
-            setMessages((prev) => [
-                ...prev,
-                assistantMessage,
-            ]);
+            setMessages((prev) => [...prev, assistantMessage]);
         } else {
-            assistantMessageId =
-                `assistant-${Date.now()}`;
+            assistantMessageId = `assistant-${Date.now()}`;
 
             const assistantMessage = {
                 id: assistantMessageId,
@@ -101,10 +80,7 @@ function ChatWindow() {
                 content: "",
             };
 
-            setMessages((prev) => [
-                ...prev,
-                assistantMessage,
-            ]);
+            setMessages((prev) => [...prev, assistantMessage]);
         }
 
         try {
@@ -114,54 +90,34 @@ function ChatWindow() {
                 conversationId,
                 message,
 
-                // Token received
                 (token) => {
                     setMessages((prev) =>
                         prev.map((msg) =>
-                            msg.id ===
-                            assistantMessageId
-                                ? {
-                                      ...msg,
-                                      content:
-                                          msg.content +
-                                          token,
-                                  }
+                            msg.id === assistantMessageId
+                                ? { ...msg, content: msg.content + token }
                                 : msg
                         )
                     );
                 },
 
-                // Stream completed
                 async (data) => {
                     if (data.sources) {
                         setMessages((prev) =>
                             prev.map((msg) =>
-                                msg.id ===
-                                assistantMessageId
-                                    ? {
-                                          ...msg,
-                                          sources:
-                                              data.sources,
-                                      }
+                                msg.id === assistantMessageId
+                                    ? { ...msg, sources: data.sources }
                                     : msg
                             )
                         );
                     }
 
-                    if (
-                        !isRetry &&
-                        messages.length === 0
-                    ) {
+                    if (!isRetry && messages.length === 0) {
                         try {
-                            const title =
-                                message
-                                    .trim()
-                                    .slice(0, 40);
+                            const title = message.trim().slice(0, 40);
 
-                            await updateConversation(
-                                conversationId,
-                                { title }
-                            );
+                            await updateConversation(conversationId, {
+                                title,
+                            });
                         } catch (error) {
                             console.error(
                                 "Failed to update conversation title:",
@@ -172,15 +128,11 @@ function ChatWindow() {
                 }
             );
         } catch (error) {
-            console.error(
-                "Chat error:",
-                error
-            );
+            console.error("Chat error:", error);
 
             setMessages((currentMessages) =>
                 currentMessages.map((msg) =>
-                    msg.id ===
-                    assistantMessageId
+                    msg.id === assistantMessageId
                         ? {
                               ...msg,
                               content:
@@ -191,78 +143,48 @@ function ChatWindow() {
                 )
             );
 
-            toast.error(
-                error.message ||
-                    "Failed to send message"
-            );
+            toast.error(error.message || "Failed to send message");
         } finally {
             setLoading(false);
         }
     };
 
-    const handleRetry = async (
-        failedMessage
-    ) => {
-        const failedIndex =
-            messages.findIndex(
-                (message) =>
-                    message.id ===
-                    failedMessage.id
-            );
+    const handleRetry = async (failedMessage) => {
+        const failedIndex = messages.findIndex(
+            (message) => message.id === failedMessage.id
+        );
 
         if (failedIndex === -1) {
             return;
         }
 
-        const userMessage =
-            messages[failedIndex - 1];
+        const userMessage = messages[failedIndex - 1];
 
-        if (
-            !userMessage ||
-            userMessage.role !== "user"
-        ) {
+        if (!userMessage || userMessage.role !== "user") {
             return;
         }
 
         setMessages((currentMessages) =>
             currentMessages.map((message) =>
-                message.id ===
-                failedMessage.id
-                    ? {
-                          ...message,
-                          content: "",
-                          error: false,
-                      }
+                message.id === failedMessage.id
+                    ? { ...message, content: "", error: false }
                     : message
             )
         );
 
-        await handleSend(
-            userMessage.content,
-            true
-        );
+        await handleSend(userMessage.content, true);
     };
 
     return (
         <main className="chat-window">
             <header className="chat-header">
-                <h2>
-                    {conversationId
-                        ? "Chat"
-                        : "New Chat"}
-                </h2>
+                <h2>{conversationId ? "Chat" : "New Chat"}</h2>
             </header>
 
             {!conversationId ? (
                 <div className="empty-chat">
-                    <h2>
-                        Start a conversation
-                    </h2>
-
-                    <p>
-                        Ask questions about
-                        your documents.
-                    </p>
+                    <h2>Start a conversation</h2>
+                    <p>Ask questions about your documents.</p>
                 </div>
             ) : (
                 <>
@@ -282,6 +204,7 @@ function ChatWindow() {
                     <ChatInput
                         onSend={handleSend}
                         disabled={loading}
+                        conversationId={conversationId}
                     />
                 </>
             )}

@@ -3,20 +3,19 @@ from rag.prompts.rag_prompt import RAG_PROMPT
 from rag.prompts.normal_prompt import NORMAL_PROMPT
 from rag.retrievers.rag_retriever import retrieve_documents
 
-# >>> NEW: cross-encoder relevance score cutoff. CrossEncoderReranker
-# attaches a "relevance_score" to each document's metadata after
-# reranking. ms-marco style cross-encoders produce roughly
-# positive-for-relevant / negative-for-irrelevant scores, so 0.0 is a
-# reasonable default cutoff. Raise it if you see irrelevant context
-# still leaking through; lower it if relevant answers get skipped.
-RELEVANCE_THRESHOLD = 0.0
+# >>> CHANGED: threshold scale changed. Previously this compared
+# against the cross-encoder's raw relevance score (roughly
+# negative-to-positive). Now that retrieval uses
+# similarity_search_with_relevance_score directly (no reranker),
+# scores are normalized to roughly 0-1, higher = more relevant.
+# 0.5 is a reasonable starting point — test with real questions and
+# adjust up (stricter) or down (more lenient) based on whether
+# irrelevant answers leak into RAG mode, or relevant ones get
+# wrongly treated as normal chat.
+RELEVANCE_THRESHOLD = 0.5
 
 
 def format_documents(documents):
-    """
-    Convert retrieved LangChain documents into a context string.
-    """
-
     if not documents:
         return "No relevant documents were found."
 
@@ -66,19 +65,12 @@ def build_normal_prompt(question: str, chat_history: str):
 
 
 def _is_relevant(documents) -> bool:
-    """
-    >>> NEW: decides RAG vs normal chat using the reranker's own
-    score — no extra LLM call needed, so this adds ~0ms to latency.
-    """
     if not documents:
         return False
 
     top_score = documents[0].metadata.get("relevance_score")
 
     if top_score is None:
-        # Reranker didn't attach a score for some reason — fail safe
-        # by treating retrieval as relevant rather than silently
-        # dropping context.
         return True
 
     return top_score >= RELEVANCE_THRESHOLD
@@ -90,20 +82,10 @@ def run_rag(
     conversation_id: str,
     has_documents: bool,
     chat_history: str = "",
-    initial_k: int = 7,
     final_k: int = 5,
 ):
-    """
-    Complete pipeline. Routes between normal chat and RAG depending
-    on whether the current conversation has documents AND whether
-    retrieval actually found something relevant.
-    """
-
     llm = get_llm()
 
-    # --------------------------------------------------
-    # No documents in this chat at all -> skip retrieval entirely.
-    # --------------------------------------------------
     if not has_documents:
         prompt = build_normal_prompt(question, chat_history)
         response = llm.invoke(prompt)
@@ -115,15 +97,11 @@ def run_rag(
             "documents": [],
         }
 
-    # --------------------------------------------------
-    # Documents exist -> retrieve + rerank, then decide relevance.
-    # --------------------------------------------------
     retrieval_result = retrieve_documents(
         question=question,
         user_id=user_id,
         conversation_id=conversation_id,
         chat_history=chat_history,
-        initial_k=initial_k,
         final_k=final_k,
     )
 
@@ -158,14 +136,8 @@ def stream_rag(
     conversation_id: str,
     has_documents: bool,
     chat_history: str = "",
-    initial_k: int = 7,
     final_k: int = 5,
 ):
-    """
-    Stream the final LLM response while keeping retrieval and
-    reranking non-streaming. Same routing logic as run_rag.
-    """
-
     llm = get_llm()
 
     if not has_documents:
@@ -187,7 +159,6 @@ def stream_rag(
         user_id=user_id,
         conversation_id=conversation_id,
         chat_history=chat_history,
-        initial_k=initial_k,
         final_k=final_k,
     )
 

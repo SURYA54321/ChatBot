@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useDispatch } from "react-redux";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import toast from "react-hot-toast";
 
 import { loginUser } from "../api/authApi";
@@ -10,14 +10,9 @@ function Login() {
     const dispatch = useDispatch();
     const navigate = useNavigate();
 
-    const [username, setUsername] =
-        useState("");
-
-    const [password, setPassword] =
-        useState("");
-
-    const [loading, setLoading] =
-        useState(false);
+    const [username, setUsername] = useState("");
+    const [password, setPassword] = useState("");
+    const [loading, setLoading] = useState(false);
 
     const handleSubmit = async (event) => {
         event.preventDefault();
@@ -25,22 +20,16 @@ function Login() {
         try {
             setLoading(true);
 
-            const data = await loginUser(
-                username,
-                password
-            );
+            const data = await loginUser(username, password);
 
-            dispatch(
-                setCredentials(data)
-            );
+            dispatch(setCredentials(data));
 
             toast.success("Login successful");
 
             navigate("/chat");
         } catch (error) {
             toast.error(
-                error.response?.data?.detail ||
-                "Login failed"
+                error.response?.data?.detail || "Login failed"
             );
         } finally {
             setLoading(false);
@@ -57,9 +46,7 @@ function Login() {
                     placeholder="Username"
                     value={username}
                     onChange={(event) =>
-                        setUsername(
-                            event.target.value
-                        )
+                        setUsername(event.target.value)
                     }
                 />
 
@@ -68,21 +55,18 @@ function Login() {
                     placeholder="Password"
                     value={password}
                     onChange={(event) =>
-                        setPassword(
-                            event.target.value
-                        )
+                        setPassword(event.target.value)
                     }
                 />
 
-                <button
-                    type="submit"
-                    disabled={loading}
-                >
-                    {loading
-                        ? "Logging in..."
-                        : "Login"}
+                <button type="submit" disabled={loading}>
+                    {loading ? "Logging in..." : "Login"}
                 </button>
             </form>
+
+            <p>
+                Don't have an account? <Link to="/register">Register</Link>
+            </p>
         </div>
     );
 }

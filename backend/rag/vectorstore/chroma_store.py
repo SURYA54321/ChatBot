@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from functools import lru_cache
 
@@ -12,7 +13,16 @@ from rag.embeddings.embedding_model import (
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 
-CHROMA_DIR = BASE_DIR / "chroma_db"
+# >>> CHANGED: was hardcoded to BASE_DIR / "chroma_db", which would
+# reset on every Render redeploy since the app's own filesystem is
+# ephemeral. Now reads from an env var so it can point at the
+# persistent disk mount path once configured in Render's dashboard.
+CHROMA_DIR = Path(
+    os.getenv(
+        "CHROMA_DIR",
+        str(BASE_DIR / "chroma_db"),
+    )
+)
 
 COLLECTION_NAME = "rag_documents"
 
@@ -52,9 +62,6 @@ def similarity_search(
 ):
     vector_store = get_vector_store()
 
-    # >>> CHANGED: filter by BOTH user_id and conversation_id, not
-    # just user_id. This is the core fix for cross-chat document
-    # leakage (requirement #2 and #5).
     return vector_store.similarity_search(
         query,
         k=k,

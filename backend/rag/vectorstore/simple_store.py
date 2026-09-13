@@ -3,7 +3,7 @@ import numpy as np
 from typing import List, Tuple, Any
 
 # Adjust this import path if your DocumentChunk model is located elsewhere
-from conversations.models import DocumentChunk 
+from documents.models import DocumentChunk 
 
 logger = logging.getLogger(__name__)
 

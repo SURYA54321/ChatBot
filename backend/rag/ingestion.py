@@ -2,7 +2,7 @@ import logging
 from typing import List
 from django.db import transaction
 
-from conversations.models import DocumentChunk
+from documents.models import DocumentChunk
 from rag.loaders.document_loader import load_document
 from rag.embeddings.embedding_model import get_embedding_model
 

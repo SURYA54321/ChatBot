@@ -18,6 +18,17 @@ from .serializers import DocumentSerializer
 logger = logging.getLogger(__name__)
 
 
+def _log_memory(label):
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS"):
+                    logger.warning(f"MEMORY [{label}]: {line.strip()}")
+                    return
+    except Exception:
+        pass
+
+
 class DocumentListUploadView(APIView):
     parser_classes = [MultiPartParser, FormParser]
 
@@ -39,6 +50,8 @@ class DocumentListUploadView(APIView):
         return Response(serializer.data)
 
     def post(self, request):
+        _log_memory("upload_start")
+
         serializer = DocumentSerializer(
             data=request.data,
             context={"request": request},
@@ -56,6 +69,8 @@ class DocumentListUploadView(APIView):
         document.status = "processing"
         document.save(update_fields=["status"])
 
+        _log_memory("before_process_document")
+
         try:
             chunks = process_document(
                 file_path=document.file.path,
@@ -66,10 +81,14 @@ class DocumentListUploadView(APIView):
                 file_type=document.file_type,
             )
 
+            _log_memory("after_process_document")
+
             if not chunks:
                 raise ValueError("No text could be extracted from the document.")
 
             add_documents(chunks)
+
+            _log_memory("after_add_documents")
 
             document.status = "completed"
             document.save(update_fields=["status"])
@@ -90,6 +109,8 @@ class DocumentListUploadView(APIView):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+        _log_memory("upload_complete")
 
         return Response(
             DocumentSerializer(document).data,

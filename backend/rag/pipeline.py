@@ -12,7 +12,7 @@ from rag.retrievers.rag_retriever import retrieve_documents
 # adjust up (stricter) or down (more lenient) based on whether
 # irrelevant answers leak into RAG mode, or relevant ones get
 # wrongly treated as normal chat.
-RELEVANCE_THRESHOLD = 0.5
+RELEVANCE_THRESHOLD = 0.3
 
 
 def format_documents(documents):

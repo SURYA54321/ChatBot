@@ -1,5 +1,5 @@
 from rag.retrievers.query_rewriter import rewrite_query
-from rag.vectorstore.chroma_store import get_vector_store
+from rag.vectorstore.simple_store import similarity_search_with_relevance_scores
 
 
 def retrieve_documents(
@@ -14,20 +14,13 @@ def retrieve_documents(
         chat_history=chat_history,
     )
 
-    vector_store = get_vector_store()
-
-    # >>> FIXED: method name typo — "scores" (plural), not "score".
-    # This was the actual cause of the last failure, not a memory
-    # issue at all.
-    results = vector_store.similarity_search_with_relevance_scores(
+    # >>> CHANGED: no more Chroma. Plain cosine similarity over this
+    # conversation's stored chunks.
+    results = similarity_search_with_relevance_scores(
         rewritten_query,
+        user_id=user_id,
+        conversation_id=conversation_id,
         k=final_k,
-        filter={
-            "$and": [
-                {"user_id": str(user_id)},
-                {"conversation_id": str(conversation_id)},
-            ]
-        },
     )
 
     documents = []

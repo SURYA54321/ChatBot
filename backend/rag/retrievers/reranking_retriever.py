@@ -8,7 +8,7 @@ from langchain_classic.retrievers.document_compressors import (
 )
 
 from rag.reranker.cross_encoder import get_reranker_model
-from rag.vectorstore.chroma_store import get_vector_store
+from Pre_project.backend.rag.vectorstore.simple_store import get_vector_store
 
 
 @lru_cache(maxsize=1)

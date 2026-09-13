@@ -1,5 +1,5 @@
 from rag.ingestion import process_document
-from rag.vectorstore.chroma_store import add_documents
+from Pre_project.backend.rag.vectorstore.simple_store import add_documents
 
 
 file_path = "test_document.txt"

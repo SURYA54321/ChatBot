@@ -1,4 +1,4 @@
-from rag.vectorstore.chroma_store import similarity_search
+from Pre_project.backend.rag.vectorstore.simple_store import similarity_search
 
 
 query = "What is Django used for?"

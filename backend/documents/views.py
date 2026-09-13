@@ -1,5 +1,4 @@
 import logging
-import os
 
 from rest_framework import status
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -8,7 +7,7 @@ from rest_framework.views import APIView
 
 from conversations.models import Conversation
 from rag.ingestion import process_document
-from rag.vectorstore.chroma_store import (
+from rag.vectorstore.simple_store import (
     add_documents,
     delete_document_vectors,
 )
@@ -17,22 +16,6 @@ from .models import Document
 from .serializers import DocumentSerializer
 
 logger = logging.getLogger(__name__)
-
-
-def _log_memory(label):
-    # >>> NEW: direct memory instrumentation. /proc/self/status is
-    # always available on Linux (Render's containers are Linux), no
-    # extra dependency needed. Logs current RSS so we can see
-    # exactly which step in the upload pipeline is consuming memory
-    # on the REAL server, not a local sandbox estimate.
-    try:
-        with open("/proc/self/status") as f:
-            for line in f:
-                if line.startswith("VmRSS"):
-                    logger.warning(f"MEMORY [{label}]: {line.strip()}")
-                    return
-    except Exception:
-        pass
 
 
 class DocumentListUploadView(APIView):
@@ -56,8 +39,6 @@ class DocumentListUploadView(APIView):
         return Response(serializer.data)
 
     def post(self, request):
-        _log_memory("upload_start")
-
         serializer = DocumentSerializer(
             data=request.data,
             context={"request": request},
@@ -75,8 +56,6 @@ class DocumentListUploadView(APIView):
         document.status = "processing"
         document.save(update_fields=["status"])
 
-        _log_memory("before_process_document")
-
         try:
             chunks = process_document(
                 file_path=document.file.path,
@@ -87,16 +66,10 @@ class DocumentListUploadView(APIView):
                 file_type=document.file_type,
             )
 
-            _log_memory("after_process_document")
-
             if not chunks:
-                raise ValueError(
-                    "No text could be extracted from the document."
-                )
+                raise ValueError("No text could be extracted from the document.")
 
             add_documents(chunks)
-
-            _log_memory("after_add_documents")
 
             document.status = "completed"
             document.save(update_fields=["status"])
@@ -117,8 +90,6 @@ class DocumentListUploadView(APIView):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-
-        _log_memory("upload_complete")
 
         return Response(
             DocumentSerializer(document).data,
@@ -162,7 +133,7 @@ class DocumentDetailView(APIView):
             )
         except Exception:
             logger.exception(
-                "Failed to delete vectors for document_id=%s",
+                "Failed to delete chunks for document_id=%s",
                 document.id,
             )
 

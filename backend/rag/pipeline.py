@@ -1,21 +1,18 @@
+import logging
 from rag.llm import get_llm
 from rag.prompts.rag_prompt import RAG_PROMPT
 from rag.prompts.normal_prompt import NORMAL_PROMPT
 from rag.retrievers.rag_retriever import retrieve_documents
 
-# >>> CHANGED: threshold scale changed. Previously this compared
-# against the cross-encoder's raw relevance score (roughly
-# negative-to-positive). Now that retrieval uses
-# similarity_search_with_relevance_score directly (no reranker),
-# scores are normalized to roughly 0-1, higher = more relevant.
-# 0.5 is a reasonable starting point — test with real questions and
-# adjust up (stricter) or down (more lenient) based on whether
-# irrelevant answers leak into RAG mode, or relevant ones get
-# wrongly treated as normal chat.
+logger = logging.getLogger(__name__)
+
+# Threshold scale for cosine similarity search (0.0 to 1.0).
+# Scores >= 0.3 trigger RAG context injection; lower scores fall back to standard LLM chat.
 RELEVANCE_THRESHOLD = 0.3
 
 
-def format_documents(documents):
+def format_documents(documents) -> str:
+    """Formats retrieved document chunks into context string for RAG prompt."""
     if not documents:
         return "No relevant documents were found."
 
@@ -24,26 +21,22 @@ def format_documents(documents):
     for index, document in enumerate(documents, start=1):
         metadata = document.metadata
 
-        filename = metadata.get("filename", "Unknown")
+        filename = metadata.get("filename") or metadata.get("source", "Unknown")
         page = metadata.get("page")
 
         source = filename
-
         if page is not None:
             source = f"{filename}, page {page + 1}"
 
         formatted_documents.append(
-            f"""[Document {index}]
-Source: {source}
-
-{document.page_content}
-"""
+            f"[Document {index}]\nSource: {source}\n\n{document.page_content}"
         )
 
     return "\n\n".join(formatted_documents)
 
 
 def build_rag_prompt(question: str, chat_history: str, documents):
+    """Builds RAG prompt template with retrieved context."""
     context = format_documents(documents)
 
     return RAG_PROMPT.invoke(
@@ -56,6 +49,7 @@ def build_rag_prompt(question: str, chat_history: str, documents):
 
 
 def build_normal_prompt(question: str, chat_history: str):
+    """Builds standard prompt template for normal chat."""
     return NORMAL_PROMPT.invoke(
         {
             "question": question,
@@ -65,15 +59,20 @@ def build_normal_prompt(question: str, chat_history: str):
 
 
 def _is_relevant(documents) -> bool:
+    """Checks if top retrieved document passes the minimum relevance threshold."""
     if not documents:
         return False
 
-    top_score = documents[0].metadata.get("relevance_score")
+    top_doc = documents[0]
+    top_score = top_doc.metadata.get("relevance_score")
+
+    if top_score is None:
+        top_score = top_doc.metadata.get("score")
 
     if top_score is None:
         return True
 
-    return top_score >= RELEVANCE_THRESHOLD
+    return float(top_score) >= RELEVANCE_THRESHOLD
 
 
 def run_rag(
@@ -84,8 +83,12 @@ def run_rag(
     chat_history: str = "",
     final_k: int = 5,
 ):
+    """
+    Executes non-streaming RAG or standard chat depending on document presence and relevance.
+    """
     llm = get_llm()
 
+    # Case 1: No documents uploaded in this conversation
     if not has_documents:
         prompt = build_normal_prompt(question, chat_history)
         response = llm.invoke(prompt)
@@ -97,6 +100,7 @@ def run_rag(
             "documents": [],
         }
 
+    # Case 2: Retrieve documents from SQLite
     retrieval_result = retrieve_documents(
         question=question,
         user_id=user_id,
@@ -105,9 +109,10 @@ def run_rag(
         final_k=final_k,
     )
 
-    documents = retrieval_result["documents"]
-    rewritten_query = retrieval_result["rewritten_query"]
+    documents = retrieval_result.get("documents", [])
+    rewritten_query = retrieval_result.get("rewritten_query", question)
 
+    # Case 3: Documents retrieved fall below relevance threshold
     if not _is_relevant(documents):
         prompt = build_normal_prompt(question, chat_history)
         response = llm.invoke(prompt)
@@ -119,6 +124,7 @@ def run_rag(
             "documents": [],
         }
 
+    # Case 4: Relevant documents found -> Run RAG
     prompt = build_rag_prompt(question, chat_history, documents)
     response = llm.invoke(prompt)
 
@@ -138,6 +144,9 @@ def stream_rag(
     chat_history: str = "",
     final_k: int = 5,
 ):
+    """
+    Executes streaming RAG (Server-Sent Events tokens) or standard streaming chat.
+    """
     llm = get_llm()
 
     if not has_documents:
@@ -162,8 +171,8 @@ def stream_rag(
         final_k=final_k,
     )
 
-    documents = retrieval_result["documents"]
-    rewritten_query = retrieval_result["rewritten_query"]
+    documents = retrieval_result.get("documents", [])
+    rewritten_query = retrieval_result.get("rewritten_query", question)
 
     if not _is_relevant(documents):
         prompt = build_normal_prompt(question, chat_history)

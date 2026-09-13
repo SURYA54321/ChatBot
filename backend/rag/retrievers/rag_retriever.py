@@ -1,73 +1,71 @@
-from rag.retrievers.query_rewriter import rewrite_query
-from rag.vectorstore.simple_store import (
-    similarity_search_with_relevance_scores,
-    get_document_order_chunks,
-)
+import logging
+from typing import List, Dict, Any
+from langchain_core.documents import Document
+from rag.embeddings.embedding_model import get_embedding_model
+from rag.vectorstore.simple_store import similarity_search_with_relevance_scores
 
-# >>> NEW: keyword-based detection for whole-document requests.
-# These aren't topical questions — similarity search against
-# "summarize the document" won't meaningfully match specific
-# chunks, since the query and content aren't semantically similar
-# text even though the request is clearly document-related.
-SUMMARY_KEYWORDS = {
-    "summarize", "summarise", "summary", "overview",
-    "key points", "main points", "tldr", "tl;dr",
-}
-
-
-def is_summary_request(question: str) -> bool:
-    lowered = question.lower()
-    return any(keyword in lowered for keyword in SUMMARY_KEYWORDS)
+logger = logging.getLogger(__name__)
 
 
 def retrieve_documents(
-    question: str,
-    user_id: str,
-    conversation_id: str,
+    question: str = None,
+    query: str = None,
+    user_id: Any = None,
+    conversation_id: Any = None,
     chat_history: str = "",
     final_k: int = 5,
-):
-    rewritten_query = rewrite_query(
-        question=question,
-        chat_history=chat_history,
-    )
+    top_k: int = 5,
+    score_threshold: float = 0.2,
+) -> Dict[str, Any]:
+    """
+    Retrieves relevant document chunks from SQLite using vector cosine similarity.
+    Compatible with both positional and keyword arguments from run_rag / stream_rag.
+    """
+    search_query = question or query or ""
+    k = final_k or top_k or 5
 
-    if is_summary_request(question):
-        # >>> NEW: for whole-document requests, pull chunks in
-        # document order instead of similarity-ranking against a
-        # query that doesn't semantically match specific content.
-        # Always treated as relevant — force_relevant lets pipeline
-        # skip the score threshold for this case.
-        documents = get_document_order_chunks(
+    try:
+        embedding_model = get_embedding_model()
+
+        # Perform lightweight vector search in SQLite via NumPy
+        scored_results = similarity_search_with_relevance_scores(
+            query=search_query,
             user_id=user_id,
             conversation_id=conversation_id,
-            limit=final_k,
+            embedding_model=embedding_model,
+            k=k,
+            score_threshold=score_threshold,
         )
 
-        for document in documents:
-            document.metadata["relevance_score"] = 1.0
+        # Convert matched chunks to standard LangChain Document objects
+        retrieved_docs: List[Document] = []
+        for chunk, score in scored_results:
+            doc = Document(
+                page_content=chunk.content,
+                metadata={
+                    "chunk_id": str(chunk.id),
+                    "chunk_index": chunk.chunk_index,
+                    "filename": getattr(chunk, "filename", "uploaded_doc"),
+                    "source": getattr(chunk, "filename", "uploaded_doc"),
+                    "page": getattr(chunk, "page", None),
+                    "score": float(score),
+                    "relevance_score": float(score),  # Read by _is_relevant()
+                },
+            )
+            retrieved_docs.append(doc)
+
+        logger.info(
+            f"Retrieved {len(retrieved_docs)} chunks for conversation {conversation_id}."
+        )
 
         return {
-            "original_query": question,
-            "rewritten_query": rewritten_query,
-            "documents": documents,
+            "documents": retrieved_docs,
+            "rewritten_query": search_query,
         }
 
-    results = similarity_search_with_relevance_scores(
-        rewritten_query,
-        user_id=user_id,
-        conversation_id=conversation_id,
-        k=final_k,
-    )
-
-    documents = []
-
-    for document, score in results:
-        document.metadata["relevance_score"] = score
-        documents.append(document)
-
-    return {
-        "original_query": question,
-        "rewritten_query": rewritten_query,
-        "documents": documents,
-    }
+    except Exception as e:
+        logger.error(f"Error during document retrieval: {str(e)}")
+        return {
+            "documents": [],
+            "rewritten_query": search_query,
+        }

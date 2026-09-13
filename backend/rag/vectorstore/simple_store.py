@@ -1,121 +1,74 @@
+import logging
 import numpy as np
+from typing import List, Tuple, Any
 
-from langchain_core.documents import Document as LCDocument
+# Adjust this import path if your DocumentChunk model is located elsewhere
+from conversations.models import DocumentChunk 
 
-from documents.models import DocumentChunk
-from rag.embeddings.embedding_model import get_embedding_model
+logger = logging.getLogger(__name__)
 
 
-def add_documents(chunks):
+def compute_cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
     """
-    Embed all chunks in ONE batched remote API call (not one call
-    per chunk), then bulk-insert into the database.
+    Calculates cosine similarity between two vector lists using NumPy.
+    Memory footprint: ~1 MB RAM.
     """
-    if not chunks:
+    v1 = np.array(vec1, dtype=np.float32)
+    v2 = np.array(vec2, dtype=np.float32)
+    
+    norm_v1 = np.linalg.norm(v1)
+    norm_v2 = np.linalg.norm(v2)
+    
+    # Avoid division by zero
+    if norm_v1 == 0 or norm_v2 == 0:
+        return 0.0
+        
+    return float(np.dot(v1, v2) / (norm_v1 * norm_v2))
+
+
+def similarity_search_with_relevance_scores(
+    query: str,
+    user_id: Any,
+    conversation_id: Any,
+    embedding_model: Any,
+    k: int = 5,
+    score_threshold: float = 0.2,
+) -> List[Tuple[Any, float]]:
+    """
+    Retrieves chunks from SQLite filtered by user and conversation, 
+    then ranks them using Cosine Similarity.
+    """
+    try:
+        # Step 1: Embed search query via remote HuggingFace API
+        query_embedding = embedding_model.embed_query(query)
+        
+        # Step 2: Fetch chunks scoped exclusively to this user & conversation
+        chunks = DocumentChunk.objects.filter(
+            user_id=user_id, 
+            conversation_id=conversation_id
+        )
+        
+        scored_results = []
+        
+        for chunk in chunks:
+            # FIX: Django JSONField is already a Python list. 
+            # Directly access `chunk.embedding` without json.loads().
+            chunk_embedding = chunk.embedding
+            
+            if not chunk_embedding:
+                continue
+                
+            score = compute_cosine_similarity(query_embedding, chunk_embedding)
+            
+            if score >= score_threshold:
+                scored_results.append((chunk, score))
+                
+        # Step 3: Sort highest similarity score first
+        scored_results.sort(key=lambda x: x[1], reverse=True)
+        
+        # Step 4: Return top k results
+        return scored_results[:k]
+        
+    except Exception as e:
+        logger.error(f"Vector similarity search failed: {str(e)}")
         return []
-
-    embedding_model = get_embedding_model()
-    texts = [chunk.page_content for chunk in chunks]
-    vectors = embedding_model.embed_documents(texts)
-
-    objects = []
-
-    for chunk, vector in zip(chunks, vectors):
-        metadata = chunk.metadata
-
-        objects.append(
-            DocumentChunk(
-                document_id=metadata["document_id"],
-                user_id=metadata["user_id"],
-                conversation_id=metadata["conversation_id"],
-                chunk_index=metadata.get("chunk_index", 0),
-                content=chunk.page_content,
-                embedding=vector,
-                filename=metadata.get("filename", ""),
-                file_type=metadata.get("file_type", ""),
-                page=metadata.get("page"),
-            )
-        )
-
-    DocumentChunk.objects.bulk_create(objects)
-
-    return [str(obj.id) for obj in objects]
-
-
-def similarity_search_with_relevance_scores(query, user_id, conversation_id, k=5):
-    """
-    Plain cosine similarity over this conversation's chunks.
-    """
-    embedding_model = get_embedding_model()
-    query_vector = np.array(embedding_model.embed_query(query), dtype=np.float32)
-    query_norm = np.linalg.norm(query_vector)
-
-    if query_norm == 0:
-        return []
-
-    chunks = DocumentChunk.objects.filter(
-        user_id=user_id,
-        conversation_id=conversation_id,
-    )
-
-    scored = []
-
-    for chunk in chunks:
-        vector = np.array(chunk.embedding, dtype=np.float32)
-        vector_norm = np.linalg.norm(vector)
-
-        if vector_norm == 0:
-            continue
-
-        score = float(np.dot(query_vector, vector) / (query_norm * vector_norm))
-
-        lc_document = LCDocument(
-            page_content=chunk.content,
-            metadata={
-                "document_id": str(chunk.document_id),
-                "filename": chunk.filename,
-                "file_type": chunk.file_type,
-                "page": chunk.page,
-                "chunk_index": chunk.chunk_index,
-            },
-        )
-
-        scored.append((lc_document, score))
-
-    scored.sort(key=lambda pair: pair[1], reverse=True)
-
-    return scored[:k]
-
-
-def get_document_order_chunks(user_id, conversation_id, limit=5):
-    """
-    For summary/overview requests. Returns chunks in document order
-    (not similarity-ranked) so a summarization request gets broad
-    coverage across the document rather than a narrow topical match.
-    """
-    chunks = DocumentChunk.objects.filter(
-        user_id=user_id,
-        conversation_id=conversation_id,
-    ).order_by("document_id", "chunk_index")[:limit]
-
-    documents = []
-
-    for chunk in chunks:
-        documents.append(
-            LCDocument(
-                page_content=chunk.content,
-                metadata={
-                    "document_id": str(chunk.document_id),
-                    "filename": chunk.filename,
-                    "file_type": chunk.file_type,
-                    "page": chunk.page,
-                    "chunk_index": chunk.chunk_index,
-                },
-            )
-        )
-
-    return documents
-
-
-def delete_document_vectors(document_id, user_id):
-    DocumentChunk.objects.filter(document_id=document_id, user_id=user_id).delete()

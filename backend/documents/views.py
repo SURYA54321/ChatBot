@@ -7,10 +7,7 @@ from rest_framework.views import APIView
 
 from conversations.models import Conversation
 from rag.ingestion import process_document
-from rag.vectorstore.simple_store import (
-    add_documents,
-    delete_document_vectors,
-)
+from rag.vectorstore.simple_store import delete_document_vectors
 
 from .models import Document
 from .serializers import DocumentSerializer
@@ -85,8 +82,6 @@ class DocumentListUploadView(APIView):
 
             if not chunks:
                 raise ValueError("No text could be extracted from the document.")
-
-            add_documents(chunks)
 
             _log_memory("after_add_documents")
 

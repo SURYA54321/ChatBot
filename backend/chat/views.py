@@ -22,10 +22,9 @@ logger = logging.getLogger(__name__)
 def _has_completed_documents(conversation_id) -> bool:
     # >>> NEW: single cheap indexed query, used to decide RAG vs
     # normal chat before doing any retrieval work (requirement #3/#4).
-    return Document.objects.filter(
-        conversation_id=conversation_id,
-    ).exists()
-
+    all_docs = Document.objects.filter(conversation_id=conversation_id)
+    logger.info("DEBUG UPLOAD CHECK - Looking for conversation_id: %s. Found docs: %s", conversation_id, list(all_docs.values('id', 'conversation_id', 'status')))
+    return all_docs.exists()
 
 class ChatView(APIView):
     permission_classes = [IsAuthenticated]

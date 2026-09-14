@@ -7,6 +7,7 @@ from rest_framework.views import APIView
 
 from conversations.models import Conversation
 from rag.ingestion import process_document
+from rag.pipeline import process_uploaded_document
 from rag.vectorstore.simple_store import delete_document_vectors
 
 from .models import Document
@@ -80,13 +81,49 @@ class DocumentListUploadView(APIView):
 
             _log_memory("after_process_document")
 
-            if not chunks:
-                raise ValueError("No text could be extracted from the document.")
+            # Determine actual chunk count depending on return format (list vs integer)
+            chunk_count = 0
+            if isinstance(chunks, int):
+                chunk_count = chunks
+            elif isinstance(chunks, (list, tuple, set)):
+                chunk_count = len(chunks)
+            elif chunks:
+                chunk_count = 1
+
+            logger.info(
+                "Processed document_id=%s, total extracted chunks=%d",
+                document.id,
+                chunk_count,
+            )
+
+            # Strict check: If 0 chunks were extracted, raise an explicit extraction error
+            if chunk_count == 0:
+                raise ValueError(
+                    "No text could be extracted from this document. The file may be image-based, scanned without OCR, or empty."
+                )
 
             _log_memory("after_add_documents")
 
             document.status = "completed"
             document.save(update_fields=["status"])
+
+        except ValueError as ve:
+            logger.warning(
+                "Document extraction warning for document_id=%s: %s",
+                document.id,
+                ve,
+            )
+
+            document.status = "failed"
+            document.save(update_fields=["status"])
+
+            return Response(
+                {
+                    "detail": str(ve),
+                    "document": DocumentSerializer(document).data,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         except Exception:
             logger.exception(
@@ -99,7 +136,7 @@ class DocumentListUploadView(APIView):
 
             return Response(
                 {
-                    "detail": "Document processing failed.",
+                    "detail": "Document processing failed on the server.",
                     "document": DocumentSerializer(document).data,
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,

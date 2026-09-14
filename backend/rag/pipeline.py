@@ -3,6 +3,7 @@ from rag.llm import get_llm
 from rag.prompts.rag_prompt import RAG_PROMPT
 from rag.prompts.normal_prompt import NORMAL_PROMPT
 from rag.retrievers.rag_retriever import retrieve_documents
+from langchain_community.document_loaders import PyPDFLoader
 
 logger = logging.getLogger(__name__)
 
@@ -10,6 +11,42 @@ logger = logging.getLogger(__name__)
 # Scores >= 0.3 trigger RAG context injection; lower scores fall back to standard LLM chat.
 RELEVANCE_THRESHOLD = 0.3
 
+def process_uploaded_document(document_instance):
+    file_path = document_instance.file.path
+    
+    # 1. Load Document
+    loader = PyPDFLoader(file_path)
+    raw_docs = loader.load()
+    
+    # 2. Check if ANY text was extracted
+    extracted_text = "".join([doc.page_content for doc in raw_docs]).strip()
+    
+    if not extracted_text:
+        logger.error(
+            "Extraction Failed: File %s contains no selectable text (possibly scanned PDF).",
+            document_instance.filename
+        )
+        document_instance.status = "FAILED"
+        document_instance.error_message = "No text could be extracted. The file may be scanned or image-based."
+        document_instance.save()
+        raise ValueError("File contains no selectable text. Please upload a digital text document or perform OCR.")
+
+    # 3. Chunk Text
+    chunks = text_splitter.split_documents(raw_docs)
+    logger.info("Successfully created %d text chunks for file %s", len(chunks), document_instance.filename)
+    
+    if not chunks:
+        document_instance.status = "FAILED"
+        document_instance.save()
+        raise ValueError("Failed to create text chunks from document.")
+
+    # 4. Store in Vector DB
+    vector_store.add_documents(chunks)
+    
+    # 5. Mark as READY
+    document_instance.status = "READY"
+    document_instance.save()
+    return len(chunks)
 
 def format_documents(documents) -> str:
     """Formats retrieved document chunks into context string for RAG prompt."""

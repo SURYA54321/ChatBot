@@ -24,7 +24,6 @@ def _has_completed_documents(conversation_id) -> bool:
     # normal chat before doing any retrieval work (requirement #3/#4).
     return Document.objects.filter(
         conversation_id=conversation_id,
-        status="completed",
     ).exists()
 
 

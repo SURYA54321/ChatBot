@@ -58,7 +58,30 @@ def build_normal_prompt(question: str, chat_history: str):
     )
 
 
-def _is_relevant(documents, threshold=0.3) -> bool:
+def _is_relevant(documents, threshold=0.4) -> bool:
+    """
+    Checks if top retrieved document passes the minimum relevance threshold.
+    Uses distance metric logic: LOWER score means HIGHER relevance.
+    """
+    if not documents:
+        return False
+
+    top_doc = documents[0]
+    top_score = top_doc.metadata.get("relevance_score")
+    
+    if top_score is None:
+        top_score = top_doc.metadata.get("score")
+
+    # If your vector store doesn't attach a score metadata, pass it through safely
+    if top_score is None:
+        return True
+
+    score_val = float(top_score)
+    logger.info("RAG Relevance Check - Top distance score: %s (Max Threshold: %s)", score_val, threshold)
+
+    # DISTANCE LOGIC: Lower score means closer match. 
+    # If the distance is less than or equal to the threshold, it is relevant.
+    return score_val <= threshold
     """
     Checks if top retrieved document passes the minimum relevance threshold.
     Switches between RAG mode and standard chat dynamically.

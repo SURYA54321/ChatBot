@@ -20,11 +20,21 @@ logger = logging.getLogger(__name__)
 
 
 def _has_completed_documents(conversation_id) -> bool:
-    # >>> NEW: single cheap indexed query, used to decide RAG vs
-    # normal chat before doing any retrieval work (requirement #3/#4).
-    all_docs = Document.objects.filter(conversation_id=conversation_id)
-    logger.info("DEBUG UPLOAD CHECK - Looking for conversation_id: %s. Found docs: %s", conversation_id, list(all_docs.values('id', 'conversation_id', 'status')))
-    return all_docs.exists()
+    """
+    Checks if successfully processed documents exist for this conversation.
+    """
+    count = Document.objects.filter(
+        conversation_id=conversation_id,
+        status="completed",
+    ).count()
+
+    logger.info(
+        "Document check for conversation_id=%s: found %d completed documents",
+        conversation_id,
+        count,
+    )
+    return count > 0
+
 
 class ChatView(APIView):
     permission_classes = [IsAuthenticated]
@@ -35,10 +45,6 @@ class ChatView(APIView):
 
         conversation_id = serializer.validated_data["conversation_id"]
         message_text = serializer.validated_data["message"]
-
-        # --------------------------------------------------
-        # 1. Get user's conversation
-        # --------------------------------------------------
 
         try:
             conversation = Conversation.objects.get(
@@ -51,28 +57,16 @@ class ChatView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # --------------------------------------------------
-        # 2. Get previous conversation history
-        # --------------------------------------------------
-
         chat_history = get_chat_history(
             conversation_id=conversation.id,
             max_messages=20,
         )
-
-        # --------------------------------------------------
-        # 3. Save user message
-        # --------------------------------------------------
 
         user_message = Message.objects.create(
             conversation=conversation,
             role="user",
             content=message_text,
         )
-
-        # --------------------------------------------------
-        # 4. Run pipeline (routes RAG vs normal chat internally)
-        # --------------------------------------------------
 
         has_documents = _has_completed_documents(conversation.id)
 
@@ -94,10 +88,6 @@ class ChatView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        # --------------------------------------------------
-        # 5. Save assistant response
-        # --------------------------------------------------
-
         assistant_message = Message.objects.create(
             conversation=conversation,
             role="assistant",
@@ -106,15 +96,7 @@ class ChatView(APIView):
 
         conversation.save(update_fields=["updated_at"])
 
-        # --------------------------------------------------
-        # 6. Build sources
-        # --------------------------------------------------
-
-        sources = format_sources(result["documents"])
-
-        # --------------------------------------------------
-        # 7. Return response
-        # --------------------------------------------------
+        sources = format_sources(result.get("documents", []))
 
         return Response(
             {
@@ -132,7 +114,7 @@ class ChatView(APIView):
                     "created_at": assistant_message.created_at,
                 },
                 "answer": result["answer"],
-                "rewritten_query": result["rewritten_query"],
+                "rewritten_query": result.get("rewritten_query", message_text),
                 "sources": sources,
             },
             status=status.HTTP_200_OK,
@@ -140,8 +122,6 @@ class ChatView(APIView):
 
 
 class ChatStreamView(APIView):
-    # >>> FIXED: this permission class was missing entirely before,
-    # meaning the streaming endpoint was reachable without auth.
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -150,10 +130,6 @@ class ChatStreamView(APIView):
 
         conversation_id = serializer.validated_data["conversation_id"]
         message_text = serializer.validated_data["message"]
-
-        # --------------------------------------------
-        # 1. Verify conversation ownership
-        # --------------------------------------------
 
         try:
             conversation = Conversation.objects.get(
@@ -166,18 +142,10 @@ class ChatStreamView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # --------------------------------------------
-        # 2. Get conversation history
-        # --------------------------------------------
-
         chat_history = get_chat_history(
             conversation_id=conversation.id,
             max_messages=20,
         )
-
-        # --------------------------------------------
-        # 3. Save user message
-        # --------------------------------------------
 
         user_message = Message.objects.create(
             conversation=conversation,
@@ -185,18 +153,9 @@ class ChatStreamView(APIView):
             content=message_text,
         )
 
-        # --------------------------------------------
-        # 4. Decide RAG vs normal chat BEFORE streaming starts
-        # --------------------------------------------
-
         has_documents = _has_completed_documents(conversation.id)
 
-        # --------------------------------------------
-        # 5. Generator
-        # --------------------------------------------
-
         def generate():
-
             full_answer = ""
             rewritten_query = ""
             documents = []
@@ -209,22 +168,15 @@ class ChatStreamView(APIView):
                     has_documents=has_documents,
                     chat_history=chat_history,
                 ):
-
                     if event["type"] == "token":
                         content = event["content"]
                         full_answer += content
 
-                        yield (
-                            f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
-                        )
+                        yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
 
                     elif event["type"] == "done":
-                        rewritten_query = event["rewritten_query"]
-                        documents = event["documents"]
-
-                # ----------------------------------
-                # Save assistant response
-                # ----------------------------------
+                        rewritten_query = event.get("rewritten_query", message_text)
+                        documents = event.get("documents", [])
 
                 assistant_message = Message.objects.create(
                     conversation=conversation,
@@ -234,39 +186,21 @@ class ChatStreamView(APIView):
 
                 conversation.save(update_fields=["updated_at"])
 
-                # ----------------------------------
-                # Format sources
-                # ----------------------------------
-
                 sources = format_sources(documents)
 
-                # ----------------------------------
-                # Final SSE event
-                # ----------------------------------
-
-                yield (
-                    f"data: {json.dumps({'type': 'done', 'message_id': str(assistant_message.id), 'rewritten_query': rewritten_query, 'sources': sources})}\n\n"
-                )
+                yield f"data: {json.dumps({'type': 'done', 'message_id': str(assistant_message.id), 'rewritten_query': rewritten_query, 'sources': sources})}\n\n"
 
             except Exception:
                 logger.exception(
                     "Streaming RAG pipeline failed for conversation_id=%s",
                     conversation.id,
                 )
-
-                yield (
-                    f"data: {json.dumps({'type': 'error', 'message': 'Failed to generate response.'})}\n\n"
-                )
-
-        # --------------------------------------------
-        # 6. Streaming response
-        # --------------------------------------------
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Failed to generate response.'})}\n\n"
 
         response = StreamingHttpResponse(
             generate(),
             content_type="text/event-stream",
         )
-
         response["Cache-Control"] = "no-cache"
         response["X-Accel-Buffering"] = "no"
 

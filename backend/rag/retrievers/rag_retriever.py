@@ -15,7 +15,7 @@ def retrieve_documents(
     chat_history: str = "",
     final_k: int = 5,
     top_k: int = 5,
-    score_threshold: float = 0.2,
+    score_threshold: float = 0.0,
 ) -> Dict[str, Any]:
     """
     Retrieves relevant document chunks from SQLite using vector cosine similarity.
@@ -36,6 +36,23 @@ def retrieve_documents(
             k=k,
             score_threshold=score_threshold,
         )
+
+        
+        if not scored_results and score_threshold > 0:
+            logger.warning(
+                "Score threshold %.2f yielded 0 chunks for conversation %s. "
+                "Falling back to score_threshold=0.0 to retrieve top chunks.",
+                score_threshold,
+                str_conv_id,
+            )
+            scored_results = similarity_search_with_relevance_scores(
+                query=search_query,
+                user_id=str_user_id,
+                conversation_id=str_conv_id,
+                embedding_model=embedding_model,
+                k=k,
+                score_threshold=0.0,
+            )
 
         # Convert matched chunks to standard LangChain Document objects
         retrieved_docs: List[Document] = []

@@ -59,21 +59,28 @@ def build_normal_prompt(question: str, chat_history: str):
 
 
 def _is_relevant(documents) -> bool:
-    """Checks if top retrieved document passes the minimum relevance threshold."""
+    """
+    Checks if top retrieved document passes the minimum relevance threshold.
+    Temporarily forced to True for debugging to verify LLM document ingestion.
+    """
     if not documents:
         return False
 
     top_doc = documents[0]
     top_score = top_doc.metadata.get("relevance_score")
-
+    
     if top_score is None:
         top_score = top_doc.metadata.get("score")
+
+    # Log the score to your Render console so you can inspect what your vector DB returns
+    logger.info("DEBUG RAG - Retrieved %d documents. Top score: %s", len(documents), top_score)
 
     if top_score is None:
         return True
 
-    return float(top_score) >= RELEVANCE_THRESHOLD
-
+    # TEMPORARY BYPASS: Returning True forces RAG context injection.
+    # Check your Render logs after deploying to see what 'top_score' actually is!
+    return True
 
 def run_rag(
     question: str,

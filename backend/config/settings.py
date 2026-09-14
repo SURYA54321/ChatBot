@@ -27,10 +27,13 @@ DEBUG = os.getenv(
 # set the real Render domain without touching code.
 ALLOWED_HOSTS = os.getenv(
     "ALLOWED_HOSTS",
-    "127.0.0.1,localhost",
-    '.onrender.com'
-    
+    "127.0.0.1,localhost,.onrender.com"
 ).split(",")
+
+# Dynamically add Render's external hostname if available
+RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
+if RENDER_EXTERNAL_HOSTNAME:
+    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
 
 INSTALLED_APPS = [

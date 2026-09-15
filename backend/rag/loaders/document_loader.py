@@ -2,6 +2,7 @@
 import base64
 import io
 from pathlib import Path
+import logging
 
 import fitz  # PyMuPDF
 from PIL import Image
@@ -14,6 +15,7 @@ from langchain_community.document_loaders import (
 )
 from langchain_core.documents import Document
 
+logger = logging.getLogger(__name__)
 groq_client = Groq()  # reads GROQ_API_KEY from env
 
 

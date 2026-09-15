@@ -1,13 +1,13 @@
 # Gemini New
 
+import base64
 import logging
 import os
 from typing import List
 
 import fitz  # PyMuPDF
 from django.db import transaction
-from google import genai
-from google.genai import types
+from groq import Groq
 from langchain_core.documents import Document
 
 from documents.models import DocumentChunk
@@ -25,44 +25,56 @@ logger = logging.getLogger(__name__)
 
 def _extract_ocr_documents(file_path: str) -> List[Document]:
     """
-    Renders PDF/image pages into in-memory JPEG bytes via PyMuPDF 
-    and sends them to Gemini Vision API for high-accuracy OCR.
-    Runs entirely in RAM (< 100 MB overhead) without requiring Poppler or Tesseract binaries.
+    Renders PDF/image pages into in-memory base64 JPEG strings via PyMuPDF 
+    and sends them to Groq's Vision API for fast OCR processing.
     """
-    logger.info("Falling back to Gemini Vision OCR for file: %s", file_path)
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    logger.info("Falling back to Groq Vision OCR for file: %s", file_path)
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        logger.error("GEMINI_API_KEY / GOOGLE_API_KEY not configured in environment.")
-        return []
+        raise ValueError("GROQ_API_KEY is not configured in environment variables.")
 
-    client = genai.Client(api_key=api_key)
+    # Vision model on Groq (e.g., llama-3.2-11b-vision-preview or llama-3.2-90b-vision-preview)
+    vision_model = os.getenv("GROQ_VISION_MODEL", "llama-3.2-11b-vision-preview")
+    client = Groq(api_key=api_key)
     ocr_documents: List[Document] = []
 
     try:
-        # PyMuPDF seamlessly opens PDFs and raw image files (PNG, JPG, JPEG, TIFF, WebP)
         doc = fitz.open(file_path)
 
         for page_num in range(len(doc)):
             page = doc[page_num]
 
-            # Render page to JPEG bytes in memory (150 DPI is optimal for fast OCR)
+            # Render page to JPEG bytes in RAM (150 DPI)
             pix = page.get_pixmap(dpi=150)
             image_bytes = pix.tobytes("jpeg")
+            base64_image = base64.b64encode(image_bytes).decode("utf-8")
 
             prompt = (
-                "Extract and transcribe all text, tables, and structured data visible on "
-                "this page verbatim. Do not summarize or add conversational commentary."
+                "Extract and transcribe all readable text, buttons, step titles, "
+                "and UI text visible in this image verbatim. Do not omit any text."
             )
 
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=[
-                    types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                    prompt,
+            completion = client.chat.completions.create(
+                model=vision_model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{base64_image}"
+                                },
+                            },
+                        ],
+                    }
                 ],
+                temperature=0.1,
+                max_tokens=1024,
             )
 
-            extracted_text = response.text.strip() if response.text else ""
+            extracted_text = completion.choices[0].message.content.strip() if completion.choices else ""
 
             if extracted_text:
                 ocr_documents.append(
@@ -74,13 +86,17 @@ def _extract_ocr_documents(file_path: str) -> List[Document]:
 
         doc.close()
         logger.info(
-            "Gemini Vision OCR successfully extracted text from %d page(s) for %s",
+            "Groq Vision OCR successfully extracted text from %d page(s) for %s",
             len(ocr_documents),
             file_path,
         )
 
     except Exception as e:
-        logger.error("Gemini Vision OCR extraction failed for %s: %s", file_path, str(e))
+        logger.error("Groq Vision OCR extraction failed for %s: %s", file_path, str(e))
+        raise e
+
+    if not ocr_documents:
+        raise ValueError("Groq OCR completed but returned no readable text.")
 
     return ocr_documents
 
@@ -95,7 +111,7 @@ def process_document(
 ) -> List:
     """
     Loads, splits, generates embeddings, and stores document chunks in SQLite.
-    Includes automated Gemini Flash Vision OCR fallback for scanned/image PDFs.
+    Includes automated Groq Vision OCR fallback for scanned/screenshot PDFs.
     """
     try:
         # Step 1: Load file content using lightweight parsers (PyMuPDF / Docx2txt)
@@ -104,10 +120,10 @@ def process_document(
         # Measure extracted text volume to detect image-only / scanned documents
         total_text = " ".join([doc.page_content for doc in documents]).strip() if documents else ""
 
-        # Step 2: Fall back to Gemini Vision OCR if standard text parsing returns empty / minimal text (< 10 words)
+        # Step 2: Fall back to Groq Vision OCR if standard parsing returns empty / minimal text (< 10 words)
         if not documents or len(total_text.split()) < 10:
             logger.warning(
-                "No readable plain text found in %s (found %d words). Triggering Gemini Vision OCR...",
+                "No readable plain text found in %s (found %d words). Triggering Groq Vision OCR...",
                 file_path,
                 len(total_text.split()),
             )
@@ -178,7 +194,6 @@ def process_document(
     except Exception as e:
         logger.error("Error processing document %s: %s", document_id, str(e))
         raise e
-
 # import logging
 # from typing import List
 # from django.db import transaction

@@ -18,13 +18,14 @@ logger = logging.getLogger(__name__)
 
 
 # Tesseract executable
-TESSERACT_CMD = os.getenv(
-    "TESSERACT_CMD",
-    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-)
+TESSERACT_CMD = os.getenv("TESSERACT_CMD")
 
-pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
-
+if TESSERACT_CMD:
+    pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
+elif os.name == "nt":
+    pytesseract.pytesseract.tesseract_cmd = (
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    )
 
 # OCR settings
 OCR_MIN_TEXT_LENGTH = 20

@@ -62,6 +62,7 @@ def _ocr_pdf_with_groq(path: Path):
     for page_num, page in enumerate(pdf):
         pix = page.get_pixmap(dpi=200)  # good balance of accuracy vs token cost
         img = Image.open(io.BytesIO(pix.tobytes("png")))
+        logger.info(f"OCR output for page {page_num} ({len(text)} chars): {text[:200]!r}")
         text = _ocr_page_with_groq(img)
         if text.strip():
             docs.append(Document(page_content=text, metadata={"page": page_num}))

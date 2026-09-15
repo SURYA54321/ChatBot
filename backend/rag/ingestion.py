@@ -6,6 +6,7 @@ from documents.models import DocumentChunk
 from rag.loaders.document_loader import load_document
 from rag.embeddings.embedding_model import get_embedding_model
 
+# New to version-5
 # Handles both import path structures safely
 try:
     from rag.loaders.text_splitter import split_documents

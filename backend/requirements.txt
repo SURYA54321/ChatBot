@@ -26,3 +26,5 @@ requests==2.34.2
 SQLAlchemy==2.0.52
 uvicorn==0.52.4
 whitenoise==6.11.0
+pytesseract
+Pillow

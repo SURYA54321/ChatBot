@@ -15,6 +15,7 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
+from django.http import JsonResponse
 from django.urls import include, path
 from django.conf import settings
 from django.conf.urls.static import static
@@ -24,8 +25,11 @@ from rest_framework_simplejwt.views import (
     TokenRefreshView,
 )
 
+def health_check(request):
+    return JsonResponse({"status": "ok"})
 
 urlpatterns = [
+    path("api/health/", health_check, name="health"),
     path("admin/", admin.site.urls),
 
     # >>> NEW: registration lives alongside the existing token

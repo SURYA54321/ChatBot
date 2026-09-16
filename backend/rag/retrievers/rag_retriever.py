@@ -37,22 +37,40 @@ def retrieve_documents(
             score_threshold=score_threshold,
         )
 
-        
+
+ 
         if not scored_results and score_threshold > 0:
             logger.warning(
                 "Score threshold %.2f yielded 0 chunks for conversation %s. "
-                "Falling back to score_threshold=0.0 to retrieve top chunks.",
+                "Falling back to score_threshold=0.0.",
                 score_threshold,
-                str_conv_id,
+                conversation_id,
             )
+
             scored_results = similarity_search_with_relevance_scores(
                 query=search_query,
-                user_id=str_user_id,
-                conversation_id=str_conv_id,
+                user_id=user_id,
+                conversation_id=conversation_id,
                 embedding_model=embedding_model,
                 k=k,
                 score_threshold=0.0,
             )
+        # Running code
+        # if not scored_results and score_threshold > 0:
+        #     logger.warning(
+        #         "Score threshold %.2f yielded 0 chunks for conversation %s. "
+        #         "Falling back to score_threshold=0.0 to retrieve top chunks.",
+        #         score_threshold,
+        #         str_conv_id,
+        #     )
+        #     scored_results = similarity_search_with_relevance_scores(
+        #         query=search_query,
+        #         user_id=str_user_id,
+        #         conversation_id=str_conv_id,
+        #         embedding_model=embedding_model,
+        #         k=k,
+        #         score_threshold=0.0,
+        #     )
 
         # Convert matched chunks to standard LangChain Document objects
         retrieved_docs: List[Document] = []

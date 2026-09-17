@@ -9,12 +9,6 @@ The chatbot supports normal conversations, multiple chat sessions, document-base
 **Frontend:**
 https://chat-bot-five-lilac.vercel.app
 
-**Backend:**
-https://chatbot-fguf.onrender.com
-
-**Health Check:**
-https://chatbot-fguf.onrender.com/api/health/
-
 ---
 
 ## ✨ Features

@@ -708,8 +708,6 @@ This endpoint can be used by monitoring services to check whether the backend is
 
 ## 🎯 Why SQLite for Vector Storage?
 
-This project is designed as an **interview/demo project**, so a lightweight architecture was preferred.
-
 Instead of using a dedicated vector database, embeddings are stored in SQLite and compared using NumPy cosine similarity.
 
 This keeps the implementation simple while demonstrating the core concepts of:
@@ -752,6 +750,4 @@ https://github.com/SURYA54321
 
 ---
 
-## ⭐ Project
 
-If you find this project useful, consider giving the repository a ⭐.
